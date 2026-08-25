@@ -257,10 +257,13 @@ await model.write({
 
 Write results include output and semantic hashes plus semantic change
 information. Presentation-only Diagram Interchange does not affect semantic
-hashes. Use `layout: "none"` to skip `bpmn-auto-layout`: existing Diagram
-Interchange is preserved unchanged, and a model without Diagram Interchange
-remains without it. Use the default `layout: "auto"` for generated models that
-need a deterministic diagram.
+hashes or change reports. Both layout modes rebuild Diagram Interchange
+rather than merging it: `layout: "auto"` (the default) discards any existing
+diagram and generates a fresh deterministic one for the whole model, and
+`layout: "none"` discards any existing diagram and writes none. Because no
+mode preserves a hand-arranged layout, prefer `layout: "auto"` when editing a
+model that already has a diagram so the output has complete Diagram
+Interchange.
 
 ## Examples
 
@@ -271,6 +274,8 @@ The executable examples cover the main supported scenarios:
 - `examples/exception-timeout-handling.mjs`
 - `examples/collaboration.mjs`
 - `examples/multi-instance-work.mjs`
+- `examples/edit-existing-model.mjs` — open an externally changed file, edit
+  in place, and continue fluently without regenerating the whole model
 
 ```sh
 npm run build

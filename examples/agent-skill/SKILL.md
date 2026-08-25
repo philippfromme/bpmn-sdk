@@ -26,6 +26,12 @@ const emptyEditor = await Bpmn.create();
 - Use `create` only when the fluent builders do not express the required
   operation.
 
+When a BPMN file already exists — including one changed outside the SDK, for
+example by a reviewer in a modeler — treat the file as the source of truth:
+open it with `Bpmn.open`, apply targeted edits in place, and use
+`continueProcess(...).at(...)` to extend topology fluently. Do not regenerate
+the model from scratch, which would discard those external changes.
+
 ## Core rules
 
 1. Use stable, meaningful IDs supplied by the caller.
@@ -34,9 +40,12 @@ const emptyEditor = await Bpmn.create();
    order.
 3. Use the fluent builders for common new-model topology. Use the editor for
    exact-ID changes or descriptor-backed features outside the fluent surface.
-4. Do not edit BPMN XML, Diagram Interchange, or raw moddle objects.
-5. Call `write()` once after all mutations are complete.
-6. Treat library errors as actionable input errors. Do not bypass validation or
+4. Prefer in-place edits over regeneration for existing files: open the file,
+   change only what is needed, and write once. Regenerating from scratch
+   discards changes made outside the generator.
+5. Do not edit BPMN XML, Diagram Interchange, or raw moddle objects.
+6. Call `write()` once after all mutations are complete.
+7. Treat library errors as actionable input errors. Do not bypass validation or
    retry by mutating XML.
 
 ## Create a process
@@ -89,10 +98,13 @@ await editor
 
 ## Layout and output
 
-- `layout: "auto"` is the default and generates deterministic Diagram
-  Interchange for generated models.
-- `layout: "none"` skips automatic layout, preserves existing Diagram
-  Interchange, and leaves models without Diagram Interchange unchanged.
+- `layout: "auto"` is the default. It discards any existing Diagram
+  Interchange and generates a fresh deterministic diagram for the whole
+  model, including newly added nodes.
+- `layout: "none"` skips automatic layout and also discards any existing
+  Diagram Interchange; the output has no diagram. No mode preserves a
+  hand-arranged layout, so prefer `layout: "auto"` when the input model has a
+  diagram.
 - `write()` serializes, reloads, checks BPMN/Zeebe semantics, and writes
   atomically.
 - A distinct existing output path requires `force: true`; do not use it unless
