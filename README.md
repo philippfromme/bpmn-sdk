@@ -187,7 +187,17 @@ The model API provides scalar and ordinary-reference edits, typed contained
 child traversal/create/remove, collision-safe ID renaming, sequence-flow
 connect/rewire/remove, and safe boundary-event attachment. It also exposes
 Zeebe helpers for forms, subscriptions, called decisions/elements, scripts,
-and multi-instance settings.
+and multi-instance settings. These helpers validate placement (for example,
+subscriptions only on `bpmn:Message`) and reject empty or ambiguous values.
+
+`extensions.ensure(...)` is the descriptor-level escape hatch for everything
+else: it validates that an extension type is known to the loaded moddle
+profiles and serializes correctly. Placement is enforced for the concepts
+covered by curated helpers — forms, subscriptions, called
+decisions/elements, scripts, and multi-instance loop characteristics can only
+be attached to their supported BPMN owners, as can `zeebe:IoMapping`. For all
+other descriptors it does not validate Camunda/Zeebe engine placement rules:
+typed and serializable does not mean engine-valid.
 
 To resume fluent topology construction after exact-ID editing, select both
 targets explicitly; no cursor is inferred:

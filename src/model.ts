@@ -125,7 +125,6 @@ export class ModelApiError extends Error {
       | "INVALID_CONTAINMENT"
       | "INVALID_CONNECTION"
       | "INVALID_EXTENSION"
-      | "INVALID_FORM"
       | "INVALID_PROPERTY"
       | "ELEMENT_REFERENCED"
       | "FOREIGN_ELEMENT"
@@ -187,6 +186,18 @@ function hasReference(element: ModdleElement, target: ModdleElement): boolean {
     });
 }
 
+function requireNonBlank(
+  value: string | undefined,
+  description: string
+): asserts value is string {
+  if (value === undefined || value.trim().length === 0) {
+    throw new ModelApiError(
+      "INVALID_EXTENSION",
+      `${description} must not be empty`
+    );
+  }
+}
+
 export class IoMappingBuilder {
   constructor(
     private readonly model: BpmnEditor,
@@ -226,15 +237,26 @@ export class ExtensionElementsBuilder {
     private readonly owner: ModelElement
   ) {}
 
+  /**
+   * Ensures a typed extension element exists on the owner.
+   *
+   * This is the descriptor-level escape hatch: it validates that the
+   * extension type is known to the loaded moddle profiles and serializes
+   * correctly. Placement is enforced for zeebe:IoMapping and for the Zeebe
+   * concepts covered by the curated helpers (forms, subscriptions, called
+   * decisions/elements, scripts, and multi-instance loop characteristics);
+   * all other descriptors are accepted on any extension-capable element
+   * without validating Camunda/Zeebe engine placement rules.
+   */
   ensure(type: "zeebe:IoMapping"): IoMappingBuilder;
   ensure<Type extends SupportedElementType>(type: Type): ModelElement<Type>;
   ensure<Type extends SupportedElementType>(
     type: Type
   ): IoMappingBuilder | ModelElement<Type> {
-    if (type === "zeebe:IoMapping" && !this.supportsIoMapping()) {
+    if (!this.supportsExtension(type)) {
       throw new ModelApiError(
         "INVALID_EXTENSION",
-        `${this.owner.type} cannot contain zeebe:IoMapping`
+        `${this.owner.type} cannot contain ${type}`
       );
     }
 
@@ -289,16 +311,33 @@ export class ExtensionElementsBuilder {
     return extension;
   }
 
-  private supportsIoMapping(): boolean {
+  private supportsExtension(type: SupportedElementType): boolean {
     const element = this.owner.raw;
-    return (
-      element.$instanceOf("bpmn:CallActivity") ||
-      element.$instanceOf("bpmn:Event") ||
-      element.$instanceOf("bpmn:ReceiveTask") ||
-      element.$instanceOf("bpmn:SubProcess") ||
-      element.$instanceOf("bpmn:UserTask") ||
-      element.$instanceOf("zeebe:ZeebeServiceTask")
-    );
+    switch (type) {
+      case "zeebe:IoMapping":
+        return (
+          element.$instanceOf("bpmn:CallActivity") ||
+          element.$instanceOf("bpmn:Event") ||
+          element.$instanceOf("bpmn:ReceiveTask") ||
+          element.$instanceOf("bpmn:SubProcess") ||
+          element.$instanceOf("bpmn:UserTask") ||
+          element.$instanceOf("zeebe:ZeebeServiceTask")
+        );
+      case "zeebe:Subscription":
+        return element.$instanceOf("bpmn:Message");
+      case "zeebe:FormDefinition":
+        return element.$instanceOf("bpmn:UserTask");
+      case "zeebe:CalledDecision":
+        return element.$instanceOf("bpmn:BusinessRuleTask");
+      case "zeebe:CalledElement":
+        return element.$instanceOf("bpmn:CallActivity");
+      case "zeebe:Script":
+        return element.$instanceOf("bpmn:ScriptTask");
+      case "zeebe:LoopCharacteristics":
+        return element.$instanceOf("bpmn:MultiInstanceLoopCharacteristics");
+      default:
+        return true;
+    }
   }
 }
 
@@ -508,9 +547,21 @@ export class ModelElement<Type extends SupportedElementType = SupportedElementTy
   configureForm(configuration: FormConfiguration): this {
     if (!this.raw.$instanceOf("bpmn:UserTask")) {
       throw new ModelApiError(
-        "INVALID_FORM",
+        "INVALID_EXTENSION",
         "Native Zeebe form configuration is only supported on bpmn:UserTask"
       );
+    }
+    const values = Object.values(configuration).filter(
+      (value) => value !== undefined
+    );
+    if (values.length === 0) {
+      throw new ModelApiError(
+        "INVALID_EXTENSION",
+        "A Zeebe form configuration requires at least one value"
+      );
+    }
+    for (const value of values) {
+      requireNonBlank(value, "A Zeebe form configuration value");
     }
 
     const form = this.extensions.ensure("zeebe:FormDefinition");
@@ -523,6 +574,13 @@ export class ModelElement<Type extends SupportedElementType = SupportedElementTy
   }
 
   configureSubscription(correlationKey: string): this {
+    if (!this.raw.$instanceOf("bpmn:Message")) {
+      throw new ModelApiError(
+        "INVALID_EXTENSION",
+        "Zeebe subscriptions are only supported on bpmn:Message"
+      );
+    }
+    requireNonBlank(correlationKey, "A Zeebe subscription correlation key");
     this.extensions.ensure("zeebe:Subscription").setProperties({ correlationKey });
     return this;
   }
@@ -531,6 +589,7 @@ export class ModelElement<Type extends SupportedElementType = SupportedElementTy
     if (!this.raw.$instanceOf("bpmn:BusinessRuleTask")) {
       throw new ModelApiError("INVALID_EXTENSION", "Called decisions require bpmn:BusinessRuleTask");
     }
+    requireNonBlank(configuration.decisionId, "A called decision ID");
     this.extensions.ensure("zeebe:CalledDecision").setProperties(configuration);
     return this;
   }
@@ -538,6 +597,19 @@ export class ModelElement<Type extends SupportedElementType = SupportedElementTy
   configureCalledElement(configuration: CalledElementConfiguration): this {
     if (!this.raw.$instanceOf("bpmn:CallActivity")) {
       throw new ModelApiError("INVALID_EXTENSION", "Called elements require bpmn:CallActivity");
+    }
+    const { processId, processIdExpression } = configuration;
+    if ((processId === undefined) === (processIdExpression === undefined)) {
+      throw new ModelApiError(
+        "INVALID_EXTENSION",
+        "A called element requires exactly one of processId or processIdExpression"
+      );
+    }
+    if (processId !== undefined) {
+      requireNonBlank(processId, "A called element process ID");
+    }
+    if (processIdExpression !== undefined) {
+      requireNonBlank(processIdExpression, "A called element process ID expression");
     }
     this.extensions.ensure("zeebe:CalledElement").setProperties(configuration);
     return this;
@@ -547,20 +619,48 @@ export class ModelElement<Type extends SupportedElementType = SupportedElementTy
     if (!this.raw.$instanceOf("bpmn:ScriptTask")) {
       throw new ModelApiError("INVALID_EXTENSION", "Scripts require bpmn:ScriptTask");
     }
+    requireNonBlank(expression, "A script expression");
+    if (resultVariable !== undefined) {
+      requireNonBlank(resultVariable, "A script result variable");
+    }
     this.extensions.ensure("zeebe:Script").setProperties({ expression, resultVariable });
     return this;
   }
 
   configureMultiInstance(configuration: MultiInstanceConfiguration): this {
-    const existing = this.raw.get("loopCharacteristics");
-    const loop = existing instanceof Object && "$type" in existing
-      ? this.model.wrap(
-        existing as TypedModdleElement<"bpmn:MultiInstanceLoopCharacteristics">
-      )
-      : this.createChild(
+    if (!this.raw.$instanceOf("bpmn:Activity")) {
+      throw new ModelApiError(
+        "INVALID_EXTENSION",
+        "Zeebe multi-instance configuration requires a BPMN activity"
+      );
+    }
+    requireNonBlank(configuration.inputCollection, "A multi-instance input collection");
+    requireNonBlank(configuration.inputElement, "A multi-instance input element");
+    if (configuration.outputCollection !== undefined) {
+      requireNonBlank(configuration.outputCollection, "A multi-instance output collection");
+    }
+    if (configuration.outputElement !== undefined) {
+      requireNonBlank(configuration.outputElement, "A multi-instance output element");
+    }
+
+    const existing = this.raw.get("loopCharacteristics") as ModdleElement | undefined;
+    if (
+      existing !== undefined &&
+      !existing.$instanceOf("bpmn:MultiInstanceLoopCharacteristics")
+    ) {
+      throw new ModelApiError(
+        "INVALID_EXTENSION",
+        `${this.type} already has non-multi-instance loop characteristics`
+      );
+    }
+    const loop = existing === undefined
+      ? this.createChild(
         "loopCharacteristics" as ContainedChildProperty<Type>,
         "bpmn:MultiInstanceLoopCharacteristics",
         {}
+      )
+      : this.model.wrap(
+        existing as TypedModdleElement<"bpmn:MultiInstanceLoopCharacteristics">
       );
     loop.extensions.ensure("zeebe:LoopCharacteristics").setProperties(configuration);
     return this;
