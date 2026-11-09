@@ -160,12 +160,15 @@ export async function runEdit(options: EditOptions): Promise<WriteResult> {
     output: options.output
   };
   committing = true;
+  let pending: Promise<WriteResult>;
 
   try {
-    return returned instanceof ProcessBuilder
-      ? await returned.write(writeOptions)
-      : await model.write(writeOptions);
+    pending = returned instanceof ProcessBuilder
+      ? returned.write(writeOptions)
+      : model.write(writeOptions);
   } finally {
     committing = false;
   }
+
+  return await pending;
 }
