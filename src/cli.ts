@@ -79,12 +79,11 @@ function parseEditArguments(
   };
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<{ exitCode: number; output: string }> {
   try {
     const options = parseEditArguments(process.argv.slice(2));
     if (options === "help") {
-      process.stdout.write(`${HELP}\n`);
-      return;
+      return { exitCode: 0, output: HELP };
     }
     if (process.stdin.isTTY) {
       throw new EditRunnerError(
@@ -97,11 +96,11 @@ async function main(): Promise<void> {
       ...options,
       script: await text(process.stdin)
     });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return { exitCode: 0, output: JSON.stringify(result) };
   } catch (error) {
-    process.stdout.write(`${JSON.stringify(toErrorReport(error))}\n`);
-    process.exitCode = 1;
+    return { exitCode: 1, output: JSON.stringify(toErrorReport(error)) };
   }
 }
 
-await main();
+const { exitCode, output } = await main();
+process.stdout.write(`${output}\n`, () => process.exit(exitCode));

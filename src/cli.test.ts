@@ -168,6 +168,46 @@ test("rejects write() calls inside the edit body and writes nothing", async () =
   });
 });
 
+test("rejects write() calls deferred past the edit body", async () => {
+  await withTemporaryDirectory("bpmn-edit-deferred-write", async (directory) => {
+    const source = await writeBpmn(directory, "source.bpmn", SUPPORT_PROCESS);
+    const output = join(directory, "output.bpmn");
+    const stray = join(directory, "stray.bpmn");
+    const outcome: { value?: string } = {};
+    const global = globalThis as typeof globalThis & {
+      deferredWriteOutcome?: { value?: string };
+    };
+    global.deferredWriteOutcome = outcome;
+
+    try {
+      const result = await runEdit({
+        file: source,
+        layout: "none",
+        output,
+        script: `
+          setImmediate(() => setImmediate(() => {
+            try {
+              model.write({ layout: "none", output: ${JSON.stringify(stray)} });
+              globalThis.deferredWriteOutcome.value = "allowed";
+            } catch (error) {
+              globalThis.deferredWriteOutcome.value = error.code;
+            }
+          }));
+        `
+      });
+      while (outcome.value === undefined) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      assert.equal(result.destination, output);
+      assert.equal(outcome.value, "WRITE_NOT_ALLOWED");
+      assert.equal(await exists(stray), false);
+    } finally {
+      delete global.deferredWriteOutcome;
+    }
+  });
+});
+
 test("reports structured errors for failed edit bodies without writing", async () => {
   await withTemporaryDirectory("bpmn-edit-errors", async (directory) => {
     const source = await writeBpmn(directory, "source.bpmn", SUPPORT_PROCESS);
