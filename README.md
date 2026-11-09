@@ -226,6 +226,46 @@ model.element("Task_1").extensions.ensureCustom("acme:Settings", {
 });
 ```
 
+## Edit from the command line
+
+`bpmn-sdk edit` runs only the edit body and owns the open/write lifecycle, so
+an edit needs no script file, module setup, or result printing:
+
+```sh
+npx bpmn-sdk edit customer-support.bpmn --output customer-support.edited.bpmn <<'JS'
+model.element("SendReply").setName("Send customer reply");
+
+return model
+  .continueProcess("CustomerSupport")
+  .at("SendReply")
+  .endEvent("ReplySent");
+JS
+```
+
+The runner opens the file with `Bpmn.open()`, runs the stdin body as an async
+function with `model` in scope, and then writes exactly once. The
+`--output <file>`, `--force`, and `--layout auto|none` options map to the
+`write()` options; without `--output`, the file is replaced in place.
+
+- If the body returns a `ProcessBuilder`, the runner writes through it. Every
+  fluent continuation created in the body is checked for completeness
+  (`UNFINISHED_BRANCH`, `UNFINISHED_PROCESS`) before writing, whether or not it
+  is returned.
+- The body may return nothing, `model`, or such a builder; anything else fails
+  with `INVALID_RETURN`. Calling `write()` in the body fails with
+  `WRITE_NOT_ALLOWED`.
+- If the body throws, nothing is written.
+
+It prints one JSON object to stdout: the `WriteResult` on success, or
+`{ "error": { "code", "message" } }` on failure, in which case it exits
+non-zero. Library errors keep their `code`; runner errors use
+`INVALID_ARGUMENTS`, `SCRIPT_SYNTAX_ERROR`, `SCRIPT_FAILED` (a non-SDK error
+thrown by the body), `INVALID_RETURN`, or `WRITE_NOT_ALLOWED`.
+
+The runner is a convenience, not a sandbox: the body is arbitrary JavaScript
+with full Node.js permissions. It adds no operations beyond the library API;
+models that need custom moddle descriptors must use `Bpmn.open()` directly.
+
 ## Create an editable model
 
 ```ts

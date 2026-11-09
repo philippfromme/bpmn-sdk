@@ -8,8 +8,12 @@ context cost.
 
 ## Public contract
 
-- Keep the public API semantic: no XML editing, JSON Pointers, generic edit
-  operations, or executable command surface.
+- Keep the public API semantic: no XML editing, JSON Pointers, or generic edit
+  operations.
+- The only executable entry point is the `bpmn-sdk edit` runner. It owns the
+  open/write lifecycle around a JavaScript edit body and must not add
+  operations beyond the library API. Treat its options, error codes, and JSON
+  output as versioned API.
 - Treat exported types, method names, error codes, and write result fields
   as versioned API.
 - Use exact IDs and typed extension builders. Do not expose moddle internals as
