@@ -1,6 +1,7 @@
 import { BpmnModdle, type ModdleElement } from "bpmn-moddle";
 import type { ModdleElement as DescriptorModdleElement } from "moddle";
 
+import { getEditorHooks } from "./editor-hooks.js";
 import {
   loadSemanticModelFromDocument,
   readSourceDocument,
@@ -1184,7 +1185,12 @@ export class BpmnEditor {
     this.refreshIndexes();
   }
 
-  async write(options: WriteOptions = {}): Promise<WriteResult> {
+  write(options: WriteOptions = {}): Promise<WriteResult> {
+    getEditorHooks(this)?.beforeWrite();
+    return this.writeVerified(options);
+  }
+
+  private async writeVerified(options: WriteOptions): Promise<WriteResult> {
     if (this.isMemoryModel && options.output === undefined) {
       throw new ModelApiError(
         "OUTPUT_REQUIRED",

@@ -56,7 +56,9 @@ try {
     import: "./dist/index.js",
     types: "./dist/index.d.ts"
   });
+  assert.deepEqual(packageJson.bin, { "bpmn-sdk": "./dist/cli.js" });
   assert.equal(files.some((path) => path.includes(".test.")), false);
+  assert.equal(files.includes("dist/cli.js"), true);
   assert.equal(files.includes("dist/index.js"), true);
   assert.equal(files.includes("dist/index.d.ts"), true);
   assert.equal(files.includes("dist/bpmn-moddle.d.ts"), true);
@@ -111,6 +113,33 @@ void model;`,
     ],
     { cwd: consumerRoot }
   );
+
+  const consumerModel = join(consumerRoot, "model.bpmn");
+  await writeFile(
+    consumerModel,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  id="Definitions_1" targetNamespace="https://example.test">
+  <bpmn:process id="Process_1"><bpmn:task id="Task_1" name="Before"/></bpmn:process>
+</bpmn:definitions>`,
+    "utf8"
+  );
+  const edit = process.platform === "win32"
+    ? execFile(
+      process.execPath,
+      [join(packageRoot, packageJson.bin["bpmn-sdk"]), "edit", "model.bpmn", "--layout", "none"],
+      { cwd: consumerRoot }
+    )
+    : execFile(
+      join(consumerRoot, "node_modules", ".bin", "bpmn-sdk"),
+      ["edit", "model.bpmn", "--layout", "none"],
+      { cwd: consumerRoot }
+    );
+  edit.child.stdin.end('model.element("Task_1").setName("After");');
+  const editResult = JSON.parse((await edit).stdout);
+
+  assert.equal(editResult.status, "written");
+  assert.match(await readFile(consumerModel, "utf8"), /name="After"/);
 } finally {
   await rm(archive, { force: true });
   await rm(consumerRoot, { force: true, recursive: true });
