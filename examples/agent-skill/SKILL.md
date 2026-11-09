@@ -11,24 +11,37 @@ does not activate this file automatically.
 
 ## Choose an entry point
 
+To edit an existing BPMN file, use the `bpmn-sdk edit` runner by default. It
+opens the file, runs only your edit body with `model` (from `Bpmn.open`) in
+scope, writes once, and prints one JSON result:
+
+```sh
+npx bpmn-sdk edit existing.bpmn <<'JS'
+model.element("SendReply").setName("Send customer reply");
+JS
+```
+
+To create a new model, write a Node script that uses the library directly:
+
 ```ts
 import { Bpmn } from "@philippfromme/bpmn-sdk";
 
 const process = await Bpmn.createProcess("process-id");
 const collaboration = await Bpmn.createCollaboration("collaboration-id");
-const editor = await Bpmn.open("existing.bpmn");
 const emptyEditor = await Bpmn.create();
 ```
 
+- Use `bpmn-sdk edit` to make exact-ID changes to an existing BPMN file.
 - Use `createProcess` for a new single-process design.
 - Use `createCollaboration` for pools, messages, and message flows.
-- Use `open` to make exact-ID changes to an existing BPMN file.
 - Use `create` only when the fluent builders do not express the required
   operation.
+- Use `Bpmn.open` in a script only when the runner cannot express the change,
+  for example when custom moddle descriptors must be loaded.
 
 When a BPMN file already exists — including one changed outside the SDK, for
 example by a reviewer in a modeler — treat the file as the source of truth:
-open it with `Bpmn.open`, apply targeted edits in place, and use
+edit it in place with `bpmn-sdk edit`, and use
 `continueProcess(...).at(...)` to extend topology fluently. Do not regenerate
 the model from scratch, which would discard those external changes.
 
@@ -44,9 +57,10 @@ the model from scratch, which would discard those external changes.
    change only what is needed, and write once. Regenerating from scratch
    discards changes made outside the generator.
 5. Do not edit BPMN XML, Diagram Interchange, or raw moddle objects.
-6. Call `write()` once after all mutations are complete.
-7. Treat library errors as actionable input errors. Do not bypass validation or
-   retry by mutating XML.
+6. With `bpmn-sdk edit`, never call `write()`; the runner writes once. In a
+   script, call `write()` once after all mutations are complete.
+7. Treat library errors as actionable input errors. Fix the edit based on the
+   error `code`. Do not bypass validation or retry by mutating XML.
 
 ## Create a process
 
@@ -73,28 +87,47 @@ await process
 
 ## Edit an existing process
 
-```ts
-const editor = await Bpmn.open("existing.bpmn");
-const task = editor.element<"bpmn:ServiceTask">("SendReply");
+```sh
+npx bpmn-sdk edit existing.bpmn --output edited.bpmn --layout none <<'JS'
+const task = model.element("SendReply");
 
 task.setName("Send customer reply");
 task.extensions.ensure("zeebe:IoMapping").addInput({
   source: "=customer.id",
   target: "customerId"
 });
-
-await editor.write({ output: "edited.bpmn", layout: "none" });
+JS
 ```
 
-To continue an existing process fluently, specify both IDs:
+To continue an existing process fluently, specify both IDs and return the
+builder so its completeness checks run before writing:
 
-```ts
-await editor
+```sh
+npx bpmn-sdk edit existing.bpmn --output completed.bpmn <<'JS'
+return model
   .continueProcess("CustomerSupport")
   .at("SendReply")
-  .endEvent("ReplySent")
-  .write({ output: "completed.bpmn" });
+  .endEvent("ReplySent");
+JS
 ```
+
+Runner contract:
+
+- Options: `--output <file>` (default: replace the input in place),
+  `--force` (replace an existing distinct output), and `--layout auto|none`.
+- The body is an async function body: use `await` and `return` directly. Return
+  nothing, `model`, or a builder from `model.continueProcess(...).at(...)`.
+  Every continuation created in the body must be complete, even if not
+  returned.
+- If the body throws, nothing is written.
+- Output is one JSON object: the write result (`status`, `destination`,
+  `changes`, hashes) on success, or `{ "error": { "code", "message" } }` with
+  a non-zero exit code on failure.
+- Runner error codes: `INVALID_ARGUMENTS`, `SCRIPT_SYNTAX_ERROR`,
+  `SCRIPT_FAILED`, `INVALID_RETURN`, and `WRITE_NOT_ALLOWED`. Other codes come
+  from the library, for example `ELEMENT_NOT_FOUND`, `UNFINISHED_PROCESS`, or
+  `OUTPUT_WRITE_FAILED`.
+- The runner is not a sandbox; it runs the body with full Node.js permissions.
 
 ## Layout and output
 
@@ -124,8 +157,8 @@ await editor
   signal boundary handlers.
 - Collaboration: create participants, messages, and message flows with exact
   IDs through `Bpmn.createCollaboration`.
-- Complex or uncommon BPMN/Zeebe properties: use `Bpmn.open` or `Bpmn.create`
-  and the exact-ID editor.
+- Complex or uncommon BPMN/Zeebe properties: use the exact-ID editor through
+  `bpmn-sdk edit` (or `Bpmn.create` for new models).
 
 Read the repository README for the complete supported fluent surface and the
 current intentionally unsupported conveniences.

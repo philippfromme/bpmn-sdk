@@ -5,6 +5,20 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `bpmn-sdk edit <file> [--output <file>] [--force] [--layout auto|none]`
+  runner. It opens the file with `Bpmn.open()`, runs the JavaScript edit body
+  read from stdin as an async function with `model` in scope, and writes
+  exactly once afterwards. A returned `ProcessBuilder` is written through the
+  builder, and every fluent continuation created in the body is checked for
+  completeness. Calling `write()` in the body fails with `WRITE_NOT_ALLOWED`;
+  a failed body writes nothing. The runner prints the `WriteResult` or
+  `{ "error": { "code", "message" } }` as one JSON object and exits non-zero
+  on failure. Runner-specific codes are `INVALID_ARGUMENTS`,
+  `INVALID_RETURN`, `SCRIPT_FAILED`, `SCRIPT_SYNTAX_ERROR`, and
+  `WRITE_NOT_ALLOWED`.
+
 ### Changed
 
 - **BREAKING:** `configureForm()` now throws `INVALID_EXTENSION` instead of
