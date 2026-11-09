@@ -239,7 +239,8 @@ export async function writeModel(
   editable: SemanticModel,
   source: SourceDocument,
   runtimeOptions: ModelRuntimeOptions,
-  options: WriteOptions = {}
+  options: WriteOptions = {},
+  beforeCommit?: () => void
 ): Promise<WriteResult> {
   const verified = await serializeAndVerifyModel(
     before,
@@ -252,7 +253,7 @@ export async function writeModel(
   const layout = options.layout ?? "auto";
 
   if (options.output === undefined) {
-    await replaceSourceFile(source.path, verified.xml);
+    await replaceSourceFile(source.path, verified.xml, beforeCommit);
     return {
       changes: writeChanges(before, verified.model),
       destination: source.path,
@@ -268,7 +269,8 @@ export async function writeModel(
       options.output,
       verified.xml,
       options.force ?? false,
-      source.path
+      source.path,
+      beforeCommit
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

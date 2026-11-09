@@ -256,6 +256,10 @@ function with `model` in scope, and then writes exactly once. The
   `WRITE_NOT_ALLOWED`.
 - If the body throws, nothing is written.
 
+The body's `console` writes to stderr, leaving stdout reserved for the runner.
+Detached exceptions or unhandled rejections observed before the output is
+committed also fail the edit without replacing or creating the destination.
+
 It prints one JSON object to stdout: the `WriteResult` on success, or
 `{ "error": { "code", "message" } }` on failure, in which case it exits
 non-zero. Library errors keep their `code`; runner errors use

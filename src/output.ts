@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, linkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import {
   access,
@@ -50,7 +50,8 @@ export async function writeOutputFile(
   path: string,
   contents: string,
   force: boolean,
-  sourcePath: string | readonly string[]
+  sourcePath: string | readonly string[],
+  beforeCommit?: () => void
 ): Promise<void> {
   const resolved = resolve(path);
   const resolvedSources = (
@@ -115,19 +116,39 @@ export async function writeOutputFile(
       flag: "wx"
     });
 
-    if (force) {
+    if (beforeCommit !== undefined) {
+      // Do not yield between the runner's failure check and publishing the file.
+      beforeCommit();
+      if (force) {
+        renameSync(temporary, resolved);
+      } else {
+        try {
+          linkSync(temporary, resolved);
+        } catch (error) {
+          if (!isHardLinkUnsupported(error)) {
+            throw error;
+          }
+          writeFileSync(resolved, contents, { encoding: "utf8", flag: "wx" });
+        }
+      }
+    } else if (force) {
       await rename(temporary, resolved);
     } else {
       await writeNewOutput(temporary, resolved, contents);
     }
   } finally {
-    await rm(temporary, { force: true });
+    if (beforeCommit === undefined) {
+      await rm(temporary, { force: true });
+    } else {
+      rmSync(temporary, { force: true });
+    }
   }
 }
 
 export async function replaceSourceFile(
   path: string,
-  contents: string
+  contents: string,
+  beforeCommit?: () => void
 ): Promise<void> {
   const resolved = resolve(path);
   const sourceStats = await stat(resolved);
@@ -142,8 +163,17 @@ export async function replaceSourceFile(
       flag: "wx"
     });
     await chmod(temporary, sourceStats.mode);
-    await rename(temporary, resolved);
+    if (beforeCommit === undefined) {
+      await rename(temporary, resolved);
+    } else {
+      beforeCommit();
+      renameSync(temporary, resolved);
+    }
   } finally {
-    await rm(temporary, { force: true });
+    if (beforeCommit === undefined) {
+      await rm(temporary, { force: true });
+    } else {
+      rmSync(temporary, { force: true });
+    }
   }
 }

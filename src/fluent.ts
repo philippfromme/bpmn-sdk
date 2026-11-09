@@ -1142,6 +1142,7 @@ export class ProcessBuilder {
   }
 
   write(options: WriteOptions): Promise<WriteResult> {
+    getEditorHooks(this.model)?.beforeWrite();
     return this.build().write(options);
   }
 

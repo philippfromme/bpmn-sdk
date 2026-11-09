@@ -2,6 +2,7 @@ import type { ProcessBuilder } from "./fluent.js";
 import type { BpmnEditor } from "./model.js";
 
 export interface EditorHooks {
+  beforeCommit(): void;
   beforeWrite(): void;
   builderCreated(builder: ProcessBuilder): void;
 }
