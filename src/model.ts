@@ -1203,7 +1203,8 @@ export class BpmnEditor {
       this.editable,
       this.source,
       this.runtimeOptions,
-      options
+      options,
+      getEditorHooks(this)?.beforeCommit
     );
   }
 

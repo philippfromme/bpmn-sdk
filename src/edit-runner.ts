@@ -1,3 +1,5 @@
+import { Console } from "node:console";
+
 import { setEditorHooks } from "./editor-hooks.js";
 import { ProcessBuilder, ProcessBuilderError } from "./fluent.js";
 import { ModelLoadError } from "./model-loader.js";
@@ -37,9 +39,9 @@ export interface ErrorReport {
   };
 }
 
-type EditBody = (model: BpmnEditor) => Promise<unknown>;
+type EditBody = (model: BpmnEditor, console: Console) => Promise<unknown>;
 
-const AsyncFunction: new (parameter: string, body: string) => EditBody =
+const AsyncFunction: new (...parameters: string[]) => EditBody =
   Object.getPrototypeOf(async () => undefined).constructor;
 
 function errorMessage(error: unknown): string {
@@ -79,7 +81,7 @@ function compile(script: string): EditBody {
   }
 
   try {
-    return new AsyncFunction("model", `"use strict";${script}`);
+    return new AsyncFunction("model", "console", `"use strict";${script}`);
   } catch (error) {
     throw new EditRunnerError("SCRIPT_SYNTAX_ERROR", errorMessage(error));
   }
@@ -102,15 +104,25 @@ export async function runEdit(options: EditOptions): Promise<WriteResult> {
   const body = compile(options.script);
   const model = await Bpmn.open(options.file);
   const builders: ProcessBuilder[] = [];
-  const rejections: unknown[] = [];
-  const onRejection = (reason: unknown): void => {
-    rejections.push(reason);
+  const failures: unknown[] = [];
+  const onFailure = (reason: unknown): void => {
+    failures.push(reason);
   };
   let committing = false;
   let writeAttempted = false;
   let returned: unknown;
 
+  function assertScriptSucceeded(): void {
+    if (writeAttempted) {
+      throw writeNotAllowed();
+    }
+    if (failures.length > 0) {
+      throw scriptFailure(failures[0]);
+    }
+  }
+
   setEditorHooks(model, {
+    beforeCommit: assertScriptSucceeded,
     beforeWrite() {
       if (!committing) {
         writeAttempted = true;
@@ -121,54 +133,55 @@ export async function runEdit(options: EditOptions): Promise<WriteResult> {
       builders.push(builder);
     }
   });
-  process.on("unhandledRejection", onRejection);
+  process.on("unhandledRejection", onFailure);
+  process.on("uncaughtException", onFailure);
 
   try {
     try {
-      returned = await body(model);
+      returned = await body(model, new Console(process.stderr, process.stderr));
     } catch (error) {
       throw scriptFailure(error);
     }
     await new Promise((resolve) => setImmediate(resolve));
+    assertScriptSucceeded();
+    if (
+      returned !== undefined &&
+      returned !== model &&
+      !(returned instanceof ProcessBuilder && returned.editor() === model)
+    ) {
+      throw new EditRunnerError(
+        "INVALID_RETURN",
+        "The edit body must return nothing, model, or a ProcessBuilder created from model.continueProcess(...).at(...)"
+      );
+    }
+    for (const builder of builders) {
+      builder.build();
+    }
+
+    const writeOptions: WriteOptions = {
+      force: options.force,
+      layout: options.layout,
+      output: options.output
+    };
+    committing = true;
+    let pending: Promise<WriteResult>;
+
+    try {
+      pending = returned instanceof ProcessBuilder
+        ? returned.write(writeOptions)
+        : model.write(writeOptions);
+    } finally {
+      committing = false;
+    }
+
+    try {
+      return await pending;
+    } catch (error) {
+      assertScriptSucceeded();
+      throw error;
+    }
   } finally {
-    process.off("unhandledRejection", onRejection);
+    process.off("unhandledRejection", onFailure);
+    process.off("uncaughtException", onFailure);
   }
-
-  if (writeAttempted) {
-    throw writeNotAllowed();
-  }
-  if (rejections.length > 0) {
-    throw scriptFailure(rejections[0]);
-  }
-  if (
-    returned !== undefined &&
-    returned !== model &&
-    !(returned instanceof ProcessBuilder && returned.editor() === model)
-  ) {
-    throw new EditRunnerError(
-      "INVALID_RETURN",
-      "The edit body must return nothing, model, or a ProcessBuilder created from model.continueProcess(...).at(...)"
-    );
-  }
-  for (const builder of builders) {
-    builder.build();
-  }
-
-  const writeOptions: WriteOptions = {
-    force: options.force,
-    layout: options.layout,
-    output: options.output
-  };
-  committing = true;
-  let pending: Promise<WriteResult>;
-
-  try {
-    pending = returned instanceof ProcessBuilder
-      ? returned.write(writeOptions)
-      : model.write(writeOptions);
-  } finally {
-    committing = false;
-  }
-
-  return await pending;
 }

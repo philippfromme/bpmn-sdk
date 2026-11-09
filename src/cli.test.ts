@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -41,16 +41,21 @@ function runCli(
   args: readonly string[],
   input: string,
   cwd: string
-): Promise<{ exitCode: number | null; stdout: string }> {
+): Promise<{ exitCode: number | null; stderr: string; stdout: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd });
     let stdout = "";
+    let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
     });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
     child.on("error", reject);
-    child.on("close", (exitCode) => resolve({ exitCode, stdout }));
+    child.on("close", (exitCode) => resolve({ exitCode, stderr, stdout }));
     child.stdin.end(input);
   });
 }
@@ -155,7 +160,10 @@ test("rejects write() calls inside the edit body and writes nothing", async () =
          .continueProcess("CustomerSupport")
          .at("SendReply")
          .endEvent("ReplySent")
-         .write({ output: ${JSON.stringify(output)} });`
+         .write({ output: ${JSON.stringify(output)} });`,
+      `const builder = model.continueProcess("CustomerSupport").at("SendReply");
+       try { builder.write({}); } catch {}
+       return builder.endEvent("ReplySent");`
     ]) {
       await rejectsWithCode(
         runEdit({ file: source, layout: "none", script }),
@@ -180,7 +188,7 @@ test("rejects write() calls deferred past the edit body", async () => {
     global.deferredWriteOutcome = outcome;
 
     try {
-      const result = await runEdit({
+      await rejectsWithCode(runEdit({
         file: source,
         layout: "none",
         output,
@@ -194,16 +202,76 @@ test("rejects write() calls deferred past the edit body", async () => {
             }
           }));
         `
-      });
+      }), "WRITE_NOT_ALLOWED");
       while (outcome.value === undefined) {
         await new Promise((resolve) => setImmediate(resolve));
       }
 
-      assert.equal(result.destination, output);
+      assert.equal(await exists(output), false);
       assert.equal(outcome.value, "WRITE_NOT_ALLOWED");
       assert.equal(await exists(stray), false);
     } finally {
       delete global.deferredWriteOutcome;
+    }
+  });
+});
+
+test("CLI reserves stdout for JSON and sends body console output to stderr", async () => {
+  await withTemporaryDirectory("bpmn-edit-console", async (directory) => {
+    await writeBpmn(directory, "source.bpmn", SUPPORT_PROCESS);
+
+    for (const fail of [false, true]) {
+      const result = await runCli(
+        ["edit", "source.bpmn", "--layout", "none"],
+        `console.log("editing");
+           console.info("details");
+           console.warn("warning");
+           console.error("diagnostic");
+           ${fail ? 'throw new Error("stop");' : 'model.element("SendReply").setName("Changed");'}`,
+        directory
+      );
+
+      assert.equal(result.exitCode, fail ? 1 : 0);
+      assert.equal(result.stdout.trim().split("\n").length, 1);
+      const report = JSON.parse(result.stdout);
+      assert.equal(fail ? report.error.code : report.status, fail ? "SCRIPT_FAILED" : "written");
+      assert.equal(result.stderr, "editing\ndetails\nwarning\ndiagnostic\n");
+    }
+  });
+});
+
+test("CLI reports detached failures without publishing or replacing output", async () => {
+  await withTemporaryDirectory("bpmn-edit-detached", async (directory) => {
+    const source = await writeBpmn(directory, "source.bpmn", SUPPORT_PROCESS);
+    const existing = await writeBpmn(directory, "existing.bpmn", "");
+    const before = await readFile(source, "utf8");
+    const beforeExisting = await readFile(existing, "utf8");
+
+    for (const outputArgs of [
+      [],
+      ["--output", "output.bpmn"],
+      ["--output", "existing.bpmn", "--force"]
+    ]) {
+      for (const [script, code] of [
+        ['setImmediate(() => model.write({}));', "WRITE_NOT_ALLOWED"],
+        ['setImmediate(() => setImmediate(() => model.write({})));', "WRITE_NOT_ALLOWED"],
+        ['setImmediate(() => setImmediate(() => Promise.reject(new Error("late"))));', "SCRIPT_FAILED"],
+        ['setImmediate(() => setImmediate(() => { throw new Error("late"); }));', "SCRIPT_FAILED"]
+      ]) {
+        const result = await runCli(
+          ["edit", "source.bpmn", "--layout", "none", ...outputArgs],
+          `model.element("SendReply").setName("Changed"); ${script}`,
+          directory
+        );
+
+        assert.equal(result.exitCode, 1, script);
+        assert.equal(result.stdout.trim().split("\n").length, 1);
+        assert.equal(JSON.parse(result.stdout).error.code, code);
+        assert.equal(result.stderr, "");
+        assert.equal(await readFile(source, "utf8"), before);
+        assert.equal(await readFile(existing, "utf8"), beforeExisting);
+        assert.deepEqual((await readdir(directory)).sort(), ["existing.bpmn", "source.bpmn"]);
+      }
     }
   });
 });
