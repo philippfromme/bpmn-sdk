@@ -1,3 +1,4 @@
+import { getEditorHooks } from "./editor-hooks.js";
 import {
   BpmnEditor,
   ModelApiError,
@@ -729,6 +730,7 @@ export class ProcessBuilder {
     this.defaultBranchClaimed = state.defaultBranchClaimed ?? false;
     this.started = state.started ?? false;
     this.terminal = state.terminal ?? false;
+    getEditorHooks(model)?.builderCreated(this);
   }
 
   static continue(
